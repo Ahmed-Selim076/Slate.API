@@ -1,0 +1,17 @@
+version: "3.9"
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: slate-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: slate
+      POSTGRES_USER: slate
+      POSTGRES_PASSWORD: slate_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - slate_pg_data:/var/lib/postgresql/data
+
+volumes:
+  slate_pg_data:

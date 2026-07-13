@@ -1,0 +1,144 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Slate.Api.Data;
+using Slate.Api.DTOs;
+using Slate.Api.Models;
+using Slate.Api.Services;
+
+namespace Slate.Api.Controllers;
+
+[ApiController]
+[Route("api/auth")]
+public class AuthController : ControllerBase
+{
+    private readonly AppDbContext _db;
+    private readonly ITokenService _tokenService;
+    private readonly PasswordHasher<User> _passwordHasher = new();
+
+    public AuthController(AppDbContext db, ITokenService tokenService)
+    {
+        _db = db;
+        _tokenService = tokenService;
+    }
+
+    private Guid CurrentUserId =>
+        Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub")!);
+
+    [HttpPost("register")]
+    public async Task<ActionResult<AuthResponse>> Register(RegisterRequest request)
+    {
+        var emailNormalized = request.Email.Trim().ToLowerInvariant();
+
+        if (await _db.Users.AnyAsync(u => u.Email == emailNormalized))
+            return Conflict(new { message = "An account with this email already exists." });
+
+        var user = new User
+        {
+            Email = emailNormalized,
+            DisplayName = request.DisplayName.Trim(),
+        };
+        user.PasswordHash = _passwordHasher.HashPassword(user, request.Password);
+
+        _db.Users.Add(user);
+        await _db.SaveChangesAsync();
+
+        var token = _tokenService.CreateToken(user);
+        return Ok(new AuthResponse(token, user.Id, user.Email, user.DisplayName));
+    }
+
+    [HttpPost("login")]
+    public async Task<ActionResult<AuthResponse>> Login(LoginRequest request)
+    {
+        var emailNormalized = request.Email.Trim().ToLowerInvariant();
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == emailNormalized);
+
+        if (user is null || user.PasswordHash is null)
+            return Unauthorized(new { message = "Invalid email or password." });
+
+        var result = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash, request.Password);
+        if (result == PasswordVerificationResult.Failed)
+            return Unauthorized(new { message = "Invalid email or password." });
+
+        var token = _tokenService.CreateToken(user);
+        return Ok(new AuthResponse(token, user.Id, user.Email, user.DisplayName));
+    }
+
+    [Authorize]
+    [HttpGet("me")]
+    public async Task<ActionResult<UserProfileResponse>> GetMe()
+    {
+        var user = await _db.Users.FindAsync(CurrentUserId);
+        if (user is null) return NotFound();
+        return Ok(new UserProfileResponse(user.Id, user.Email, user.DisplayName));
+    }
+
+    [Authorize]
+    [HttpPatch("me")]
+    public async Task<ActionResult<UserProfileResponse>> UpdateMe(UpdateProfileRequest request)
+    {
+        var user = await _db.Users.FindAsync(CurrentUserId);
+        if (user is null) return NotFound();
+
+        user.DisplayName = request.DisplayName.Trim();
+        await _db.SaveChangesAsync();
+
+        return Ok(new UserProfileResponse(user.Id, user.Email, user.DisplayName));
+    }
+
+    [Authorize]
+    [HttpPost("change-password")]
+    public async Task<IActionResult> ChangePassword(ChangePasswordRequest request)
+    {
+        var user = await _db.Users.FindAsync(CurrentUserId);
+        if (user is null || user.PasswordHash is null) return NotFound();
+
+        var result = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash, request.CurrentPassword);
+        if (result == PasswordVerificationResult.Failed)
+            return BadRequest(new { message = "Current password is incorrect." });
+
+        user.PasswordHash = _passwordHasher.HashPassword(user, request.NewPassword);
+        await _db.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+    [HttpPost("forgot-password")]
+    public async Task<ActionResult<ForgotPasswordResponse>> ForgotPassword(ForgotPasswordRequest request)
+    {
+        var emailNormalized = request.Email.Trim().ToLowerInvariant();
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == emailNormalized);
+
+        // Always return 200 regardless of whether the account exists, so this
+        // endpoint can't be used to check which emails are registered.
+        if (user is null) return Ok(new ForgotPasswordResponse(null));
+
+        user.ResetToken = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        user.ResetTokenExpiresAt = DateTime.UtcNow.AddHours(1);
+        await _db.SaveChangesAsync();
+
+        // DEV MODE: no email service configured yet, so the token is returned
+        // directly. Swap this for an actual email send before going to production.
+        return Ok(new ForgotPasswordResponse(user.ResetToken));
+    }
+
+    [HttpPost("reset-password")]
+    public async Task<IActionResult> ResetPassword(ResetPasswordRequest request)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.ResetToken == request.Token);
+        if (user is null || user.ResetTokenExpiresAt is null || user.ResetTokenExpiresAt < DateTime.UtcNow)
+            return BadRequest(new { message = "This reset link is invalid or has expired." });
+
+        user.PasswordHash = _passwordHasher.HashPassword(user, request.NewPassword);
+        user.ResetToken = null;
+        user.ResetTokenExpiresAt = null;
+        await _db.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+    // TODO Phase 2: [HttpGet("google")] + callback — exchange Google id_token for a Slate session,
+    // creating a User row with GoogleId set and PasswordHash left null.
+}
