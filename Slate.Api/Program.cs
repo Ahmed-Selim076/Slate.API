@@ -74,6 +74,14 @@ builder.Services.AddSignalR()
 
 var app = builder.Build();
 
+// Apply any pending EF Core migrations automatically on startup, so the
+// production database schema always matches the code without a manual step.
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.Database.Migrate();
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi(); // raw OpenAPI JSON at /openapi/v1.json — add a UI package later if you want a browsable page
