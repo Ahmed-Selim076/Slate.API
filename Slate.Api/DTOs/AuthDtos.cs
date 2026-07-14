@@ -13,6 +13,10 @@ public record LoginRequest(
     [Required] string Password
 );
 
+public record GoogleLoginRequest(
+    [Required] string IdToken
+);
+
 public record AuthResponse(
     string Token,
     Guid UserId,
