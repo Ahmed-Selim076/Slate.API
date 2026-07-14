@@ -16,12 +16,14 @@ public class AuthController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly ITokenService _tokenService;
+    private readonly string _googleClientId;
     private readonly PasswordHasher<User> _passwordHasher = new();
 
-    public AuthController(AppDbContext db, ITokenService tokenService)
+    public AuthController(AppDbContext db, ITokenService tokenService, IConfiguration config)
     {
         _db = db;
         _tokenService = tokenService;
+        _googleClientId = config["Google:ClientId"]!;
     }
 
     private Guid CurrentUserId =>
@@ -61,6 +63,47 @@ public class AuthController : ControllerBase
         var result = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash, request.Password);
         if (result == PasswordVerificationResult.Failed)
             return Unauthorized(new { message = "Invalid email or password." });
+
+        var token = _tokenService.CreateToken(user);
+        return Ok(new AuthResponse(token, user.Id, user.Email, user.DisplayName));
+    }
+
+    [HttpPost("google")]
+    public async Task<ActionResult<AuthResponse>> GoogleLogin(GoogleLoginRequest request)
+    {
+        Google.Apis.Auth.GoogleJsonWebSignature.Payload payload;
+        try
+        {
+            payload = await Google.Apis.Auth.GoogleJsonWebSignature.ValidateAsync(request.IdToken,
+                new Google.Apis.Auth.GoogleJsonWebSignature.ValidationSettings
+                {
+                    Audience = new[] { _googleClientId },
+                });
+        }
+        catch (Exception)
+        {
+            return Unauthorized(new { message = "Invalid Google token." });
+        }
+
+        var emailNormalized = payload.Email.Trim().ToLowerInvariant();
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.GoogleId == payload.Subject || u.Email == emailNormalized);
+
+        if (user is null)
+        {
+            user = new User
+            {
+                Email = emailNormalized,
+                DisplayName = payload.Name ?? emailNormalized,
+                GoogleId = payload.Subject,
+            };
+            _db.Users.Add(user);
+        }
+        else if (user.GoogleId is null)
+        {
+            user.GoogleId = payload.Subject; // link existing email/password account
+        }
+
+        await _db.SaveChangesAsync();
 
         var token = _tokenService.CreateToken(user);
         return Ok(new AuthResponse(token, user.Id, user.Email, user.DisplayName));
@@ -138,7 +181,4 @@ public class AuthController : ControllerBase
 
         return NoContent();
     }
-
-    // TODO Phase 2: [HttpGet("google")] + callback — exchange Google id_token for a Slate session,
-    // creating a User row with GoogleId set and PasswordHash left null.
 }
