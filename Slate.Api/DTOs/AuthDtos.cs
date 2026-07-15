@@ -21,17 +21,27 @@ public record AuthResponse(
     string Token,
     Guid UserId,
     string Email,
-    string DisplayName
+    string DisplayName,
+    string? AvatarUrl
 );
 
 public record UserProfileResponse(
     Guid UserId,
     string Email,
-    string DisplayName
+    string DisplayName,
+    string? AvatarUrl
 );
 
 public record UpdateProfileRequest(
     [Required, MinLength(1), MaxLength(80)] string DisplayName
+);
+
+// AvatarDataUrl must be a "data:image/...;base64,..." string. The frontend
+// resizes the image to a small square before sending it, but the server
+// still enforces a hard size cap (see AuthController) since this is never
+// trusted input.
+public record UpdateAvatarRequest(
+    [Required] string AvatarDataUrl
 );
 
 public record ChangePasswordRequest(
