@@ -48,7 +48,7 @@ public class AuthController : ControllerBase
         await _db.SaveChangesAsync();
 
         var token = _tokenService.CreateToken(user);
-        return Ok(new AuthResponse(token, user.Id, user.Email, user.DisplayName));
+        return Ok(new AuthResponse(token, user.Id, user.Email, user.DisplayName, user.AvatarUrl));
     }
 
     [HttpPost("login")]
@@ -65,7 +65,7 @@ public class AuthController : ControllerBase
             return Unauthorized(new { message = "Invalid email or password." });
 
         var token = _tokenService.CreateToken(user);
-        return Ok(new AuthResponse(token, user.Id, user.Email, user.DisplayName));
+        return Ok(new AuthResponse(token, user.Id, user.Email, user.DisplayName, user.AvatarUrl));
     }
 
     [HttpPost("google")]
@@ -106,7 +106,7 @@ public class AuthController : ControllerBase
         await _db.SaveChangesAsync();
 
         var token = _tokenService.CreateToken(user);
-        return Ok(new AuthResponse(token, user.Id, user.Email, user.DisplayName));
+        return Ok(new AuthResponse(token, user.Id, user.Email, user.DisplayName, user.AvatarUrl));
     }
 
     [Authorize]
@@ -115,7 +115,7 @@ public class AuthController : ControllerBase
     {
         var user = await _db.Users.FindAsync(CurrentUserId);
         if (user is null) return NotFound();
-        return Ok(new UserProfileResponse(user.Id, user.Email, user.DisplayName));
+        return Ok(new UserProfileResponse(user.Id, user.Email, user.DisplayName, user.AvatarUrl));
     }
 
     [Authorize]
@@ -128,7 +128,44 @@ public class AuthController : ControllerBase
         user.DisplayName = request.DisplayName.Trim();
         await _db.SaveChangesAsync();
 
-        return Ok(new UserProfileResponse(user.Id, user.Email, user.DisplayName));
+        return Ok(new UserProfileResponse(user.Id, user.Email, user.DisplayName, user.AvatarUrl));
+    }
+
+    // The frontend resizes to a small square (~256px) JPEG/PNG before
+    // sending, so a real upload lands well under this. The cap just guards
+    // against something oversized ever reaching the database column.
+    private const int MaxAvatarDataUrlLength = 700_000;
+
+    [Authorize]
+    [HttpPut("me/avatar")]
+    public async Task<ActionResult<UserProfileResponse>> UpdateAvatar(UpdateAvatarRequest request)
+    {
+        var user = await _db.Users.FindAsync(CurrentUserId);
+        if (user is null) return NotFound();
+
+        if (!request.AvatarDataUrl.StartsWith("data:image/"))
+            return BadRequest(new { message = "That doesn't look like a valid image." });
+
+        if (request.AvatarDataUrl.Length > MaxAvatarDataUrlLength)
+            return BadRequest(new { message = "That image is too large. Try a smaller photo." });
+
+        user.AvatarUrl = request.AvatarDataUrl;
+        await _db.SaveChangesAsync();
+
+        return Ok(new UserProfileResponse(user.Id, user.Email, user.DisplayName, user.AvatarUrl));
+    }
+
+    [Authorize]
+    [HttpDelete("me/avatar")]
+    public async Task<ActionResult<UserProfileResponse>> DeleteAvatar()
+    {
+        var user = await _db.Users.FindAsync(CurrentUserId);
+        if (user is null) return NotFound();
+
+        user.AvatarUrl = null;
+        await _db.SaveChangesAsync();
+
+        return Ok(new UserProfileResponse(user.Id, user.Email, user.DisplayName, user.AvatarUrl));
     }
 
     [Authorize]
