@@ -94,7 +94,7 @@ All elements are stored as JSON in a single PostgreSQL column — no separate ta
 
 ### Backend
 ```bash
-git clone https://github.com/Mohamed-Elsayed1xx/Slate-API
+git clone https://github.com/Ahmed-Selim076/Slate.API
 cd Slate.Api
 ```
 
@@ -122,7 +122,7 @@ dotnet run
 
 ### Frontend
 ```bash
-git clone https://github.com/Mohamed-Elsayed1xx/Slate-Frontend
+git clone https://github.com/Ahmed-Selim076/Slate.Frontend
 cd Slate.Frontend
 npm install
 ```
